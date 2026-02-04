@@ -2,3 +2,4 @@ yt_dlp
 requests
 requests[socks]
 gallery-dl
+structlog
