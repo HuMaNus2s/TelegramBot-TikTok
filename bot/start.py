@@ -1,19 +1,19 @@
 import asyncio
-import logging
 from pathlib import Path
 from typing import Optional
-import io
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command, ExceptionTypeFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import CommandStart, ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, CallbackQuery, ErrorEvent, FSInputFile, BotCommand
+from aiogram.types import Message, ErrorEvent, BotCommand, BufferedInputFile, InputMediaPhoto
+
+import aiogram.types as t
+t.MediaGroup = None
 
 from middleware.download import download_tiktok_content
+from middleware.process_buffer import process_buffer
 
 from logger.logger import log
 from config.config import STATIC_DIR
@@ -35,7 +35,6 @@ main_router = Router(name="main_router")
 @root_router.message(CommandStart())
 async def cmd_start(message: Message, command: Optional[str] = None):
     """Обработчик /start"""
-    user = message.from_user
     text = (
         "Привет! 👋"
         "Я помогаю скачивать видео и фото из соцсетей без водяных знаков.\n\n"  
@@ -56,10 +55,36 @@ async def handle_any_text(message: Message):
 
     if "tiktok.com" in text or "vm.tiktok.com" in text:
         await message.answer("Сейчас скачаю тикток без водяного знака… ⏳")
-        success, buffer, ext = download_tiktok_content("https://tiktok.com/...")
-        if success and buffer:
-            data = buffer.read()
-            message.answer_document(document=io.BytesIO(data), filename=f"tiktok-file.{ext}")
+
+        loop = asyncio.get_event_loop()
+        success, buffer, ext = await loop.run_in_executor(None, download_tiktok_content, text, message.from_user.id, message.message_id)
+
+        if not success or not buffer:
+            await message.answer("Не удалось скачать контент 😔")
+            return
+
+        buffer.seek(0)
+        album_data = await process_buffer(buffer, ext)
+        if not album_data:
+            await message.answer("Не удалось извлечь файлы")
+            return
+
+        photos = [(d, n) for d, n in album_data if n.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
+        if len(photos) > 1:
+            media_group = [
+                InputMediaPhoto(
+                    media=BufferedInputFile(file=d, filename=n),
+                    caption=""
+                ) for d, n in photos
+            ]
+            await message.answer_media_group(media=media_group)
+        else:
+            for bytes_content, filename in album_data:
+                file_io = BufferedInputFile(file=bytes_content, filename=filename)
+                if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                    await message.answer_photo(photo=file_io)
+                else:
+                    await message.answer_video(video=file_io)
     else:
         await message.answer(
             "Похоже, это не ссылка на TikTok.\n\n"
@@ -67,7 +92,6 @@ async def handle_any_text(message: Message):
             "https://www.tiktok.com/@username/video/123456789\n"
             "или короткую vm.tiktok.com/xxxxx"
         )
-
 
 
 #@root_router.message(Command("cancel"))
@@ -79,7 +103,6 @@ async def handle_any_text(message: Message):
 #
 #    await state.clear()
 #    await message.answer("Действие отменено")
-
 
 # ---------------------- Пример отправки медиа ----------------------
 
@@ -100,10 +123,8 @@ async def handle_any_text(message: Message):
 
 async def set_commands(bot: Bot):
     commands = [
-        BotCommand(command="start", description="Перезапустить бота"),
-        BotCommand(command="help", description="Справка"),
-        BotCommand(command="download", description="Скачать тикток по ссылке (видео/фото)"),
-        BotCommand(command="cancel", description="Отменить действие"),
+        BotCommand(command="start", description="Скачать тикток по ссылке (видео/фото)"),
+        BotCommand(command="test", description="Тест"),
     ]
     await bot.set_my_commands(commands)
 

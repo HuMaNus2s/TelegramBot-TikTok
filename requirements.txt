@@ -3,4 +3,4 @@ requests
 requests[socks]
 gallery-dl
 gallery-dl-bytes
-structlog
+aiogram

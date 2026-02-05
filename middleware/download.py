@@ -1,79 +1,80 @@
-import contextlib
 import io
+import subprocess
+import tempfile
+import os
 import zipfile
-import yt_dlp
 from typing import Optional, Tuple
-
 from config.config import PROXY
 from logger.logger import log
 
 
-def download_tiktok_content(url: str) -> Tuple[bool, Optional[io.BytesIO], Optional[str]]:
-    proxy = f"socks5://{PROXY}" if PROXY else None
-
-    # ── yt-dlp для видео (остаётся как есть) ───────────────────────────
-    ydl_opts = {
-        'outtmpl': '-',
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'merge_output_format': 'mp4',
-        'proxy': proxy,
-        'noplaylist': True,
-        'quiet': True,
-        'simulate': False,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'referer': 'https://www.tiktok.com/',
-        'impersonate': 'chrome',
-        'socket_timeout': 60,
-        'retries': 10,
-    }
+def download_tiktok_content(url: str, user_id: int = None, message_id: int = None) -> Tuple[bool, Optional[io.BytesIO], Optional[str]]:
+    proxy_str = f"socks5://{PROXY}" if PROXY else None
+    log.info("Download TikTok: %s | proxy=%s | message_id=%s | uid=%s", url, proxy_str, message_id, user_id)
 
     buffer = io.BytesIO()
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        cmd = ['yt-dlp', '-o', '-', '--no-part', '--quiet', '--no-warnings', '--merge-output-format', 'mp4', url]
+        if proxy_str:
+            cmd += ['--proxy', proxy_str]
 
-            if info.get('duration') or any(f.get('acodec') != 'none' for f in info.get('formats', [])):
-                with contextlib.redirect_stdout(buffer):
-                    ydl.download([url])
-                size = buffer.tell()
-                if size > 100_000:
-                    log.info("yt-dlp → видео скачано в память (%.1f MB)", size / 1_048_576)
-                    buffer.seek(0)
-                    return True, buffer, 'mp4'
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        video_bytes, stderr = process.communicate(timeout=180)
 
+        if process.returncode == 0 and len(video_bytes) > 100_000:
+            buffer = io.BytesIO(video_bytes)
+            log.info("yt-dlp DONE: %.1f MB", len(video_bytes) / 1_048_576)
+            return True, buffer, 'mp4'
+        else:
+            pass
+    except subprocess.TimeoutExpired:
+        log.error("yt-dlp timeout")
     except Exception as e:
-        log.warning("yt-dlp ошибка: %s", str(e))
+        log.warning("yt-dlp ERROR: %s", str(e))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cmd = [
+            'gallery-dl',
+            '--proxy', proxy_str if proxy_str else '',
+            '--directory', tmp_dir,
+            '--quiet',
+            url
+        ]
+        if not proxy_str:
+            cmd.remove('--proxy')
+            cmd.remove('')
 
-    # ── gallery-dl-bytes для фото/слайдшоу ─────────────────────────────
-    try:
-        from gallery_dl_bytes import download_to_bytes
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            if result.returncode == 0:
+                files = []
+                for root, _, filenames in os.walk(tmp_dir):
+                    for fname in filenames:
+                        path = os.path.join(root, fname)
+                        with open(path, 'rb') as f:
+                            data = f.read()
+                        rel_path = os.path.relpath(path, tmp_dir)
+                        files.append((rel_path, data))
 
-        result = download_to_bytes(url, proxy=proxy)
+                if len(files) == 1:
+                    _, data = files[0]
+                    buffer = io.BytesIO(data)
+                    ext = files[0][0].rsplit('.', 1)[-1].lower() if '.' in files[0][0] else 'jpg'
+                    mime = f'image/{ext}' if ext in {'jpg', 'jpeg', 'png', 'webp'} else 'application/octet-stream'
+                    log.info("gallery-dl DONE: 1 file ~%.1f MB", len(data) / 1_048_576)
+                    return True, buffer, mime
+                elif len(files) > 1:
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        for fname, data in files:
+                            zf.writestr(fname, data)
+                    zip_buffer.seek(0)
+                    log.info("gallery-dl DONE: zip %d files ~%.1f MB", len(files), zip_buffer.tell() / 1_048_576)
+                    return True, zip_buffer, 'application/zip'
+        except subprocess.TimeoutExpired:
+            log.error("gallery-dl timeout")
+        except Exception as e:
+            log.error("gallery-dl ERROR: %s", str(e))
 
-        if result:
-            if len(result) == 1:
-                filename, data = result[0]
-                ext = filename.split('.')[-1].lower() or 'jpg'
-                buffer = io.BytesIO(data)
-                size = len(data)
-                log.info("gallery-dl-bytes → одиночный файл в память (%.1f MB, %s)", size / 1_048_576, ext)
-                return True, buffer, ext
-
-            else:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for filename, data in result:
-                        zf.writestr(filename, data)
-                zip_buffer.seek(0)
-                size = zip_buffer.tell()
-                log.info("gallery-dl-bytes → %d файлов zipped в память (%.1f MB)", len(result), size / 1_048_576)
-                return True, zip_buffer, 'zip'
-
-    except ImportError:
-        log.error("gallery-dl-bytes не установлен (pip install gallery-dl-bytes)")
-    except Exception as e:
-        log.error("gallery-dl-bytes ошибка: %s", str(e))
-
-    log.error("Скачивание провалено: %s", url)
+    log.error("Complete download failure")
     return False, None, None
