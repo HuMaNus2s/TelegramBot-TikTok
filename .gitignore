@@ -1,1 +1,6 @@
 config.py
+/__pycache__
+/bot/__pycache__
+/config/__pycache__
+/logger/__pycache__
+/middleware/__pycache__
