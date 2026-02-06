@@ -3,3 +3,4 @@
 /config/__pycache__
 /logger/__pycache__
 /middleware/__pycache__
+config/config.py

@@ -4,12 +4,13 @@ import tempfile
 import os
 import zipfile
 from typing import Optional, Tuple
-from config.config import PROXY
+from middleware.proxy import Proxy
 from logger.logger import log
 
 
 def download_tiktok_content(url: str, user_id: int = None, message_id: int = None) -> Tuple[bool, Optional[io.BytesIO], Optional[str]]:
-    proxy_str = f"socks5://{PROXY}" if PROXY else None
+    proxy = Proxy().get_proxy()
+    proxy_str = f"socks5://{proxy}" if proxy else None
     log.info("Download TikTok: %s | proxy=%s | message_id=%s | uid=%s", url, proxy_str, message_id, user_id)
 
     buffer = io.BytesIO()

@@ -1,8 +1,8 @@
 import asyncio
 
-from middleware.download import download_tiktok_content
 from logger.logger import log
 from bot.start import TeleBot
+from middleware.proxy import Proxy
 
 from config.config import BOT_TOKEN
 

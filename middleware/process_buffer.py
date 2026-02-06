@@ -19,7 +19,7 @@ async def process_buffer(buffer, ext: str = 'mp4') -> list[tuple[bytes, str]]:
 
     result = []
 
-    if is_zip(buffer_bytes):
+    if await is_zip(buffer_bytes):
         try:
             with zipfile.ZipFile(io.BytesIO(buffer_bytes)) as z:
                 for name in z.namelist():

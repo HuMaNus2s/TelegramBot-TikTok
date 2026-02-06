@@ -4,3 +4,5 @@ requests[socks]
 gallery-dl
 gallery-dl-bytes
 aiogram
+bs4
+lxml
