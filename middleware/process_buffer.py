@@ -2,8 +2,9 @@ import zipfile
 import io
 from .is_zip import is_zip
 
-from logger.logger import log
+from logger.logger import logger
 
+log = logger(__name__)
 
 async def process_buffer(buffer, ext: str = 'mp4') -> list[tuple[bytes, str]]:
     """
@@ -32,7 +33,7 @@ async def process_buffer(buffer, ext: str = 'mp4') -> list[tuple[bytes, str]]:
                         result.append((data, name.strip('/\\')))
 
         except zipfile.BadZipFile:
-            log.warning("Damaged ZIP → fallback on video")
+            log.warning("Damaged ZIP -> fallback on video")
             result.append((buffer_bytes, f"fallback_video.{ext}"))
         except Exception as e:
             log.error(f"ZIP ERROR: {e}")

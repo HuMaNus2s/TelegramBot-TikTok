@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, ErrorEvent, BotCommand, BufferedInputFile, InputMediaPhoto
+from aiogram.client.session.aiohttp import AiohttpSession
 
 import aiogram.types as t
 t.MediaGroup = None
@@ -15,9 +16,10 @@ t.MediaGroup = None
 from middleware.download import download_tiktok_content
 from middleware.process_buffer import process_buffer
 
-from logger.logger import log
+from logger.logger import logger
 from config.config import STATIC_DIR
 
+log = logger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / STATIC_DIR
@@ -77,7 +79,7 @@ async def handle_any_text(message: Message):
                     caption=""
                 ) for d, n in photos
             ]
-            await message.answer_media_group(media=media_group)
+            await message.answer_media_group(media=media_group, request_timeout=90)
         else:
             for bytes_content, filename in album_data:
                 file_io = BufferedInputFile(file=bytes_content, filename=filename)
@@ -120,7 +122,6 @@ async def handle_any_text(message: Message):
 #    )
 
 # ---------------------- Запуск бота ----------------------
-
 async def set_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="Скачать тикток по ссылке (видео/фото)"),
@@ -130,12 +131,14 @@ async def set_commands(bot: Bot):
 
 class TeleBot:
     async def start(bot_token: str):
+        session = AiohttpSession(timeout=120)
         bot = Bot(
             token=bot_token,
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML,
                 protect_content=False,
-            )
+            ),
+            session=session
         )
         storage = MemoryStorage() # Хранение состояний
 
