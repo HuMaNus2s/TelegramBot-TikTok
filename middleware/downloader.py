@@ -47,4 +47,4 @@ def download_tiktok_content(
 
     log.error("All attempt (%d) download TikTok failed: %s | msg=%s | uid=%s",
                retries, url, message_id, user_id)
-    return False, None, None
+    return False, None, None, 0

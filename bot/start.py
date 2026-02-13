@@ -1,14 +1,13 @@
 import asyncio
 from pathlib import Path
 from typing import Optional
-import time
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, ErrorEvent, BotCommand, BufferedInputFile, InputMediaPhoto
+from aiogram.types import Message, ErrorEvent, BotCommand
 from aiogram.client.session.aiohttp import AiohttpSession
 
 import aiogram.types as t
@@ -17,6 +16,7 @@ t.MediaGroup = None
 from middleware.downloader import download_tiktok_content
 from middleware.process_buffer import process_buffer
 from middleware.telegram.send_message import send_files_one_by_one
+from middleware.heartbeat.keep_alive import keep_alive_ping
 
 from logger.logger import logger
 from config.config import STATIC_DIR
@@ -67,11 +67,9 @@ async def handle_any_text(message: Message):
     loop = asyncio.get_running_loop()
 
     try:
-        start = time.perf_counter()
-        success, buffer, ext, time_res = await loop.run_in_executor(
+        success, buffer, ext, result_time = await loop.run_in_executor(
             None, download_tiktok_content, text, message.from_user.id, message.message_id
         )
-        end = time.perf_counter()
 
         if not success or not buffer:
             await message.answer("Не получилось скачать 😔")
@@ -85,22 +83,10 @@ async def handle_any_text(message: Message):
             await message.answer("Файлы не извлеклись 😕")
             return
 
-        photos = [(d, n) for d, n in album_data if n.lower().endswith(IMAGE_EXTS_LOWER)]
+        files = [(d, n) for d, n in album_data if n.lower()]
 
-        if len(photos) >= 2:
-            media_group = [
-                InputMediaPhoto(media=BufferedInputFile(d, n), caption="")
-                for d, n in photos
-            ]
-            try:
-                await message.answer_media_group(media=media_group, request_timeout=ALBUM_TIMEOUT)
-                log.info("Альбом из %d фото отправлен успешно | down: %ss | %.2fs", len(photos), time_res, end - start)
-                return
-            except Exception as e: 
-                log.warning("Альбом не прошёл (%s), отправляем по одному: %s", type(e).__name__, e)
-
-        sent = await send_files_one_by_one(message, album_data)
-        log.info("SEND: %d files | down: %ss | %.2fs", sent, time_res, end - start)
+        sent, sent_time = await send_files_one_by_one(message, files)
+        log.info("SEND: %d files | DOWNLOAD: %.2fs | UPLOAD: %.2fs", sent, result_time, sent_time)
 
     except Exception as e:
         log.exception("ERROR in processing TikTok")
@@ -160,6 +146,7 @@ class TeleBot:
 
         log.info("BOT START")
         try:
+            asyncio.create_task(keep_alive_ping(bot))
             await dp.start_polling(
                 bot,
                 allowed_updates=dp.resolve_used_update_types(),
