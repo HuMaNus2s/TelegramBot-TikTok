@@ -7,17 +7,24 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, ErrorEvent, BotCommand, BufferedInputFile, InputMediaPhoto
+from aiogram.types import Message, ErrorEvent, BotCommand
+from aiogram.client.session.aiohttp import AiohttpSession
 
 import aiogram.types as t
 t.MediaGroup = None
 
-from middleware.download import download_tiktok_content
+from middleware.downloader import download_tiktok_content
 from middleware.process_buffer import process_buffer
+from middleware.telegram.send_message import send_files_one_by_one
+from middleware.heartbeat.keep_alive import keep_alive_ping
 
-from logger.logger import log
+from logger.logger import logger
 from config.config import STATIC_DIR
+from config.config import IMAGE_EXTS_LOWER
+from config.config import VIDEO_EXTS_LOWER
+from config.config import ALBUM_TIMEOUT
 
+log = logger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / STATIC_DIR
@@ -30,7 +37,6 @@ main_router = Router(name="main_router")
 
 
 # ---------------------- Фильтры и обработчики ----------------------
-
 @root_router.message(CommandStart(deep_link=True))
 @root_router.message(CommandStart())
 async def cmd_start(message: Message, command: Optional[str] = None):
@@ -48,50 +54,43 @@ async def cmd_start(message: Message, command: Optional[str] = None):
 @main_router.message(F.text)
 async def handle_any_text(message: Message):
     text = message.text.strip()
-
     if not text:
         await message.answer("Пустое сообщение ¯\\_(ツ)_/¯")
         return
 
-    if "tiktok.com" in text or "vm.tiktok.com" in text:
-        await message.answer("Сейчас скачаю тикток без водяного знака… ⏳")
+    if "tiktok.com" not in text and "vm.tiktok.com" not in text:
+        await message.answer("Это не TikTok-ссылка. Пришли нормальную ссылку pls")
+        return
 
-        loop = asyncio.get_event_loop()
-        success, buffer, ext = await loop.run_in_executor(None, download_tiktok_content, text, message.from_user.id, message.message_id)
+    await message.answer("Скачиваю без водяного знака… ⏳")
+
+    loop = asyncio.get_running_loop()
+
+    try:
+        success, buffer, ext, result_time = await loop.run_in_executor(
+            None, download_tiktok_content, text, message.from_user.id, message.message_id
+        )
 
         if not success or not buffer:
-            await message.answer("Не удалось скачать контент 😔")
+            await message.answer("Не получилось скачать 😔")
             return
 
         buffer.seek(0)
-        album_data = await process_buffer(buffer, ext)
+
+        album_data = await loop.run_in_executor(None, process_buffer, buffer, ext)
+
         if not album_data:
-            await message.answer("Не удалось извлечь файлы")
+            await message.answer("Файлы не извлеклись 😕")
             return
 
-        photos = [(d, n) for d, n in album_data if n.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
-        if len(photos) > 1:
-            media_group = [
-                InputMediaPhoto(
-                    media=BufferedInputFile(file=d, filename=n),
-                    caption=""
-                ) for d, n in photos
-            ]
-            await message.answer_media_group(media=media_group)
-        else:
-            for bytes_content, filename in album_data:
-                file_io = BufferedInputFile(file=bytes_content, filename=filename)
-                if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                    await message.answer_photo(photo=file_io)
-                else:
-                    await message.answer_video(video=file_io)
-    else:
-        await message.answer(
-            "Похоже, это не ссылка на TikTok.\n\n"
-            "Пришли пожалуйста ссылку вида:\n"
-            "https://www.tiktok.com/@username/video/123456789\n"
-            "или короткую vm.tiktok.com/xxxxx"
-        )
+        files = [(d, n) for d, n in album_data if n.lower()]
+
+        sent, sent_time = await send_files_one_by_one(message, files)
+        log.info("SEND: %d files | DOWNLOAD: %.2fs | UPLOAD: %.2fs", sent, result_time, sent_time)
+
+    except Exception as e:
+        log.exception("ERROR in processing TikTok")
+        await message.answer("Что-то сильно сломалось… Попробуй позже")
 
 
 #@root_router.message(Command("cancel"))
@@ -120,7 +119,6 @@ async def handle_any_text(message: Message):
 #    )
 
 # ---------------------- Запуск бота ----------------------
-
 async def set_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="Скачать тикток по ссылке (видео/фото)"),
@@ -130,12 +128,14 @@ async def set_commands(bot: Bot):
 
 class TeleBot:
     async def start(bot_token: str):
+        session = AiohttpSession(timeout=120)
         bot = Bot(
             token=bot_token,
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML,
                 protect_content=False,
-            )
+            ),
+            session=session
         )
         storage = MemoryStorage() # Хранение состояний
 
@@ -146,6 +146,7 @@ class TeleBot:
 
         log.info("BOT START")
         try:
+            asyncio.create_task(keep_alive_ping(bot))
             await dp.start_polling(
                 bot,
                 allowed_updates=dp.resolve_used_update_types(),

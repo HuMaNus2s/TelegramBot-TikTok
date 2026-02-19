@@ -2,9 +2,11 @@ import requests
 from bs4 import BeautifulSoup
 import subprocess
 
-from logger.logger import log
+from logger.logger import logger
 from config.config import BLACKLIST_COUNTRY
 from config.config import TIKTOK_DOMAIN
+
+log = logger(__name__)
 
 class ProxySOCKS5:
     def __init__(self, ip: str, port: int, country: str, ping: int,):
