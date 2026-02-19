@@ -1,4 +1,4 @@
-BOT_TOKEN= "7418982441:AAEqCB8tnDm6Mj2il2KPUKHAP0YvuWT930c"  
+BOT_TOKEN= ""  
 
 DEV_LOGS = "true"
 STATIC_DIR = "static" # in root project
