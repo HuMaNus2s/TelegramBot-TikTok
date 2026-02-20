@@ -2,7 +2,7 @@ import io
 from typing import Optional, Tuple
 import time
 
-from middleware.proxy import Proxy
+from middleware.proxy.proxy import Proxy
 from logger.logger import logger
 from .download.dl_gallery import _run_gallery_dl
 from .download.yt_dlp import _run_yt_dlp
@@ -21,7 +21,7 @@ def download_tiktok_content(
     Возвращает: (успех, буфер или None, mime-тип или None)
     """
     for attempt in range(1, retries + 1):
-        proxy = Proxy().get_proxy()
+        proxy = Proxy().get_proxy
         proxy_str = f"socks5://{proxy}" if proxy else None
 
         log.info(

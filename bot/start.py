@@ -17,6 +17,7 @@ from middleware.downloader import download_tiktok_content
 from middleware.process_buffer import process_buffer
 from middleware.telegram.send_message import send_files_one_by_one
 from middleware.heartbeat.keep_alive import keep_alive_ping
+from middleware.proxy.proxy import Proxy
 
 from logger.logger import logger
 from config.config import STATIC_DIR
